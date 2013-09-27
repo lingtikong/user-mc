@@ -112,6 +112,7 @@ int MinMC::iterate(int maxevent)
 
   // main loop of MC
   for (iter = 1; iter <= max_iter; ++iter){
+    int ntimestep = ++update->ntimestep;
     // Displacement
     ++stage;
     MC_disp();
@@ -129,6 +130,13 @@ int MinMC::iterate(int maxevent)
 
     stage = it = 0;
     if (iter==1 || iter==max_iter || (iter%freq_out)==0) print_info(10);
+
+    // output for thermo, dump, restart files
+    if (output->next == ntimestep){
+      timer->stamp();
+      output->write(ntimestep);
+      timer->stamp(TIME_OUTPUT);
+    }
   }
 
   MC_final();
@@ -638,6 +646,7 @@ void MinMC::print_info(const int flag)
       for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(fp1,"-");
       fprintf(fp1,"\n");
     }
+/*
     if (screen){
       fprintf(screen,"#");
       for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(screen,"-");
@@ -647,6 +656,7 @@ void MinMC::print_info(const int flag)
       for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(screen,"-");
       fprintf(screen,"\n");
     }
+*/
 
   } else if (flag == 1){
     double succ = double(acc_disp)/double(MAX(1, att_disp))*100.;
@@ -655,11 +665,13 @@ void MinMC::print_info(const int flag)
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
+/*
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(screen, "\n");
     }
+*/
 
   } else if (flag == 2){
     double succ = double(acc_swap)/double(MAX(1,att_swap))*100.;
@@ -668,11 +680,13 @@ void MinMC::print_info(const int flag)
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
+/*
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(screen, "\n");
     }
+*/
 
   } else if (flag == 3){
     double succ = double(acc_vol)/double(MAX(1,att_vol))*100.;
@@ -681,11 +695,13 @@ void MinMC::print_info(const int flag)
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
+/*
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(screen, "\n");
     }
+*/
 
   } else if (flag == 10){
     double succ = double(acc_total)/double(MAX(1,att_total))*100.;
@@ -695,11 +711,13 @@ void MinMC::print_info(const int flag)
       fprintf(fp1, "\n");
       fflush(fp1);
     }
+/*
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(screen, "\n");
     }
+*/
 
   }
 
