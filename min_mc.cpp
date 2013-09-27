@@ -111,7 +111,6 @@ int MinMC::iterate(int maxevent)
 
   // main loop of MC
   for (iter = 1; iter <= max_iter; ++iter){
-    int ntimestep = ++update->ntimestep; ++niter;
     // Displacement
     ++stage;
     MC_disp();
@@ -131,7 +130,9 @@ int MinMC::iterate(int maxevent)
     if (iter==1 || iter==max_iter || (iter%freq_out)==0) print_info(10);
 
     // output for thermo, dump, restart files
+    int ntimestep = ++update->ntimestep; ++niter;
     if (output->next == ntimestep){
+      energy_force(0);
       timer->stamp();
       output->write(ntimestep);
       timer->stamp(TIME_OUTPUT);
@@ -386,7 +387,7 @@ void MinMC::MC_setup()
       ++nat_loc[ip];
     }
   }
-  MPI_Reduce(nat_loc,  nat_all,   atom->ntypes+1, MPI_INT, MPI_SUM, 0, world);
+  MPI_Allreduce(nat_loc, nat_all, atom->ntypes+1, MPI_INT, MPI_SUM, world);
 
   if (rmass){
     double *mass_one = new double[atom->ntypes+1];
@@ -448,6 +449,7 @@ void MinMC::MC_disp()
           x0_loc[idim] = x[i][idim];
           x[i][idim] += dmax2 * (0.5 - random->uniform());
         }
+        break;
       }
     }
     MPI_Allreduce(x0_loc, x0_all, 3, MPI_DOUBLE, MPI_SUM, world);
@@ -463,6 +465,7 @@ void MinMC::MC_disp()
       for (int i = 0; i < atom->nlocal; ++i){
         if (tag[i] == that){
           for (int idim = 0; idim < 3; ++idim) x[i][idim] = x0_all[idim];
+          break;
         }
       }
 
@@ -500,8 +503,8 @@ void MinMC::MC_swap()
     int *tag   = atom->tag;
     double *rmass = atom->rmass;
 
-    double tmp_loc[2], tmp_all[2];
-    tmp_loc[0] = tmp_loc[1] = 0.;
+    int ip_loc[2], ip_all[2];
+    ip_loc[0] = ip_loc[1] = 0.;
    
     for (int i = 0; i < nlocal; ++i){
       int ip = atom->type[i];
@@ -516,20 +519,23 @@ void MinMC::MC_swap()
 
         ++nat_loc[ip_new]; --nat_loc[ip_old];
 
-        tmp_loc[0] = type2mass[ip_new]/type2mass[ip_old];
-        tmp_loc[1] = ChemBias[ip_old][ip_new];
+		  ip_loc[0] = ip_old; ip_loc[1] = ip_new;
 
         phit = me;
         id_hit = i;
       }
     }
     MPI_Reduce(nat_loc, nat_all, atom->ntypes+1, MPI_INT, MPI_SUM, 0, world);
-    MPI_Allreduce(tmp_loc, tmp_all, 2, MPI_DOUBLE, MPI_SUM, world);
+    MPI_Allreduce(ip_loc, ip_all, 2, MPI_INT, MPI_SUM, world);
+    ip_old = ip_all[0]; ip_new = ip_all[1];
 
     // evaluate energy and do metropolis
     ecurrent = energy_force(0); ++neval;
 
-    delE = (ecurrent - eref) - 1.5 * kT * log(tmp_all[0]) - tmp_all[1];
+    double fagu = type2mass[ip_new]/type2mass[ip_old];
+    double cb   = ChemBias[ip_old][ip_new];
+
+    delE = (ecurrent - eref) - 1.5 * kT * log(fagu) - cb;
     int acc = Metropolis(delE);
 
     if (acc){
@@ -538,14 +544,6 @@ void MinMC::MC_swap()
 
     } else {
 
-/*
-      for (int i = 0; i < atom->nlocal; ++i){
-        if (tag[i] == that){
-          atom->type[i] = ip_old;
-          if (rmass) rmass[i] = type2mass[ip_old];
-        }
-      }
-*/
       if (me == phit){
         atom->type[id_hit] = ip_old;
         if (rmass) rmass[id_hit] = type2mass[ip_new];
@@ -678,12 +676,13 @@ return;
  *----------------------------------------------------------------------------------------------- */
 int MinMC::Metropolis(const double dE)
 {
-  if (dE < 0.) return 1;
-
   int res = 0;
   if (me == 0){
-    double rnd = random->uniform();
-    if (exp(-dE * inv_kT) > rnd) res = 1;
+    if (dE < 0.) res = 1;
+    else {
+      double rnd = random->uniform();
+      if (exp(-dE * inv_kT) > rnd) res = 1;
+    }
   }
   MPI_Bcast(&res, 1, MPI_INT, 0, world);
 
@@ -699,12 +698,11 @@ void MinMC::remap(const int dir, const double ratio)
 {
   double **x = atom->x;
   int *mask = atom->mask;
-  int nlocal = atom->nlocal;
 
   // convert pertinent atoms and rigid bodies to lamda coords
-  if (remapall) domain->x2lamda(nlocal);
+  if (remapall) domain->x2lamda(atom->nlocal);
   else {
-    for (int i = 0; i < nlocal; i++){
+    for (int i = 0; i < atom->nlocal; i++){
       if (mask[i] & groupbit) domain->x2lamda(x[i],x[i]);
     }
   }
@@ -724,9 +722,9 @@ void MinMC::remap(const int dir, const double ratio)
   domain->set_local_box();
 
   // convert pertinent atoms and rigid bodies back to box coords
-  if (remapall) domain->lamda2x(nlocal);
+  if (remapall) domain->lamda2x(atom->nlocal);
   else {
-    for (int i = 0; i < nlocal; i++){
+    for (int i = 0; i < atom->nlocal; i++){
       if (mask[i] & groupbit) domain->lamda2x(x[i],x[i]);
     }
   }
