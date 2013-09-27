@@ -566,18 +566,19 @@ return;
 void MinMC::MC_vol()
 {
   double ratio;
-  double dv = dm_vol + dm_vol;
+  const double dv = dm_vol + dm_vol;
 
   att_vol = acc_vol = 0;
   for (it = 1; it <= nMC_vol; ++it){
     for (int dir = 0; dir < 3; ++dir){
+      if (domain->periodicity[dir] == 0) continue;
+
       if (me == 0) ratio = dv * (0.5-random->uniform());
       MPI_Bcast(&ratio, 1, MPI_INT, 0, world);
 
-      if (remap(dir, ratio)) continue;
+      remap(dir, ratio);
 
       ecurrent = energy_force(0); ++neval;
-
       delE = ecurrent - eref - 3.*double(ngroup)*kT*log(1.+ratio);
       int acc = Metropolis(delE);
 
@@ -694,10 +695,8 @@ return res;
  * remap all atoms or fix group atoms depending on allremap flag
  * if rigid bodies exist, scale rigid body centers-of-mass
  *----------------------------------------------------------------------------------------------- */
-int MinMC::remap(const int dir, const double ratio)
+void MinMC::remap(const int dir, const double ratio)
 {
-  if (domain->periodicity[dir] == 0) return 1;
-
   double **x = atom->x;
   int *mask = atom->mask;
   int nlocal = atom->nlocal;
@@ -718,8 +717,8 @@ int MinMC::remap(const int dir, const double ratio)
   double oldlo = domain->boxlo[dir];
   double oldhi = domain->boxhi[dir];
   double ctr = 0.5 * (oldlo + oldhi);
-  domain->boxlo[dir] = (oldlo-ctr)*(1.+ratio) + ctr;
-  domain->boxhi[dir] = (oldhi-ctr)*(1.+ratio) + ctr;
+  domain->boxlo[dir] = (oldlo-ctr)*(1. + ratio) + ctr;
+  domain->boxhi[dir] = (oldhi-ctr)*(1. + ratio) + ctr;
 
   domain->set_global_box();
   domain->set_local_box();
@@ -736,7 +735,7 @@ int MinMC::remap(const int dir, const double ratio)
     for (int i = 0; i < nrigid; i++) modify->fix[rfix[i]]->deform(1);
   }
 
-return 0;
+return;
 }
 
 /* ---------------------------------------------------------------------------------------------- */

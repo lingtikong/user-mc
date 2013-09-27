@@ -36,7 +36,7 @@ private:
   int Metropolis(const double);
 
   int remapall;
-  int remap(const int, const double);
+  void remap(const int, const double);
   int nrigid, *rfix;
 
   int seed;
