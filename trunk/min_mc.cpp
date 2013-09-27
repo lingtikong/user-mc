@@ -40,7 +40,7 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   T = 300.;
   seed = 1234;
   remapall = 1;
-  log_level = evalf = 0;
+  log_level = neval = 0;
   freq_out = freq_disp = freq_swap = freq_vol = 1;
 
   fp1 = NULL;
@@ -104,7 +104,6 @@ int MinMC::iterate(int maxevent)
   print_info(0);
 
   iter = it = stage = 0;
-  ecurrent = energy_force(0); ++evalf;
   eref = ecurrent;
 
   // log info for the zero step
@@ -112,7 +111,7 @@ int MinMC::iterate(int maxevent)
 
   // main loop of MC
   for (iter = 1; iter <= max_iter; ++iter){
-    int ntimestep = ++update->ntimestep;
+    int ntimestep = ++update->ntimestep; ++niter;
     // Displacement
     ++stage;
     MC_disp();
@@ -454,7 +453,7 @@ void MinMC::MC_disp()
     MPI_Allreduce(x0_loc, x0_all, 3, MPI_DOUBLE, MPI_SUM, world);
     
     // evaluate the new energy
-    ecurrent = energy_force(0); ++evalf;
+    ecurrent = energy_force(0); ++neval;
 
     // Metropolis
     delE = ecurrent - eref;
@@ -528,7 +527,7 @@ void MinMC::MC_swap()
     MPI_Allreduce(tmp_loc, tmp_all, 2, MPI_DOUBLE, MPI_SUM, world);
 
     // evaluate energy and do metropolis
-    ecurrent = energy_force(0); ++evalf;
+    ecurrent = energy_force(0); ++neval;
 
     delE = (ecurrent - eref) - 1.5 * kT * log(tmp_all[0]) - tmp_all[1];
     int acc = Metropolis(delE);
@@ -577,7 +576,7 @@ void MinMC::MC_vol()
 
       if (remap(dir, ratio)) continue;
 
-      ecurrent = energy_force(0); ++evalf;
+      ecurrent = energy_force(0); ++neval;
 
       delE = ecurrent - eref - 3.*double(ngroup)*kT*log(1.+ratio);
       int acc = Metropolis(delE);
@@ -608,23 +607,11 @@ void MinMC::MC_final()
     if (fp1){
       fprintf(fp1, "\n");
       fprintf(fp1, "#=========================================================================================\n");
-      fprintf(fp1, "# Total number of MC cycles     : %d\n", max_iter);
-      fprintf(fp1, "# Num of accepted disp. attempt : %d (%4.2f%% success)\n", acc_disp, double(acc_disp)/(double(max_iter)*double(nMC_disp)));
-      fprintf(fp1, "# Num of accepted swap  attempt : %d (%4.2f%% success)\n", acc_swap, double(acc_swap)/(double(max_iter)*double(nMC_swap)));
-      fprintf(fp1, "# Num of accepted volume adjust : %d (%4.2f%% success)\n", acc_vol, double(acc_vol)/(double(max_iter)*double(nMC_vol)));
-      fprintf(fp1, "# Number of force evaluation    : " BIGINT_FORMAT "\n", evalf);
+      fprintf(fp1, "# Total number of MC cycles  : %d\n", max_iter);
+      fprintf(fp1, "# Total number atomic types  : %d\n", atom->ntypes);
+      fprintf(fp1, "# Total # of accepted swaps  : %d (%4.2f%% success)\n", acc_total, double(acc_total)/double(MAX(1,att_total)));
+      fprintf(fp1, "# Number of force evaluation : %d\n", neval);
       fprintf(fp1, "#=========================================================================================\n");
-    }
-   
-    if (screen){
-      fprintf(screen, "\n");
-      fprintf(screen, "#=========================================================================================\n");
-      fprintf(screen, "# Total number of MC cycles     : %d\n", max_iter);
-      fprintf(screen, "# Num of accepted disp. attempt : %d (%4.2f%% success)\n", acc_disp, double(acc_disp)/(double(max_iter)*double(nMC_disp)));
-      fprintf(screen, "# Num of accepted swap  attempt : %d (%4.2f%% success)\n", acc_swap, double(acc_swap)/(double(max_iter)*double(nMC_swap)));
-      fprintf(screen, "# Num of accepted volume adjust : %d (%4.2f%% success)\n", acc_vol, double(acc_vol)/(double(max_iter)*double(nMC_vol)));
-      fprintf(screen, "# Number of force evaluation    : " BIGINT_FORMAT "\n", evalf);
-      fprintf(screen, "#=========================================================================================\n");
     }
   }
 
@@ -646,17 +633,6 @@ void MinMC::print_info(const int flag)
       for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(fp1,"-");
       fprintf(fp1,"\n");
     }
-/*
-    if (screen){
-      fprintf(screen,"#");
-      for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(screen,"-");
-      fprintf(screen, "\n# MCiter stage iter     PotentialEng   acc%%   ");
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, "  Type-%02d%%", ip);
-      fprintf(screen,"\n#");
-      for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(screen,"-");
-      fprintf(screen,"\n");
-    }
-*/
 
   } else if (flag == 1){
     double succ = double(acc_disp)/double(MAX(1, att_disp))*100.;
@@ -665,13 +641,6 @@ void MinMC::print_info(const int flag)
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
-/*
-    if (screen){
-      fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(screen, "\n");
-    }
-*/
 
   } else if (flag == 2){
     double succ = double(acc_swap)/double(MAX(1,att_swap))*100.;
@@ -680,13 +649,6 @@ void MinMC::print_info(const int flag)
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
-/*
-    if (screen){
-      fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(screen, "\n");
-    }
-*/
 
   } else if (flag == 3){
     double succ = double(acc_vol)/double(MAX(1,att_vol))*100.;
@@ -695,13 +657,6 @@ void MinMC::print_info(const int flag)
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
-/*
-    if (screen){
-      fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(screen, "\n");
-    }
-*/
 
   } else if (flag == 10){
     double succ = double(acc_total)/double(MAX(1,att_total))*100.;
@@ -711,13 +666,6 @@ void MinMC::print_info(const int flag)
       fprintf(fp1, "\n");
       fflush(fp1);
     }
-/*
-    if (screen){
-      fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(screen, "\n");
-    }
-*/
 
   }
 

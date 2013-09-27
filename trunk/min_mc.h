@@ -27,7 +27,6 @@ private:
   void MC_setup();
   void MC_final();
 
-  bigint evalf;
   int it, iter, stage;
   int max_iter;
   void MC_disp();
