@@ -546,7 +546,7 @@ void MinMC::MC_swap()
 
       if (me == phit){
         atom->type[id_hit] = ip_old;
-        if (rmass) rmass[id_hit] = type2mass[ip_new];
+        if (rmass) rmass[id_hit] = type2mass[ip_old];
       }
       if (me == 0){ --nat_all[ip_new]; ++nat_all[ip_old];}
     }
