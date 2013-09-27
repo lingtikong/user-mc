@@ -459,8 +459,12 @@ void MinMC::MC_disp()
 
     // Metropolis
     delE = ecurrent - eref;
-    int acc = Metropolis(delE);
-    if (acc == 0){
+
+    if ( Metropolis(delE) ){
+      eref = ecurrent;
+      ++acc_disp;
+
+    } else {
       // restore the atomic position
       for (int i = 0; i < atom->nlocal; ++i){
         if (tag[i] == that){
@@ -468,10 +472,6 @@ void MinMC::MC_disp()
           break;
         }
       }
-
-    } else {
-      eref = ecurrent;
-      ++acc_disp;
     }
 
     ++att_disp;
@@ -536,9 +536,8 @@ void MinMC::MC_swap()
     double cb   = ChemBias[ip_old][ip_new];
 
     delE = (ecurrent - eref) - 1.5 * kT * log(fagu) - cb;
-    int acc = Metropolis(delE);
 
-    if (acc){
+    if ( Metropolis(delE) ){
       eref = ecurrent;
       ++acc_swap;
 
@@ -578,15 +577,14 @@ void MinMC::MC_vol()
 
       ecurrent = energy_force(0); ++neval;
       delE = ecurrent - eref - 3.*double(ngroup)*kT*log(1.+ratio);
-      int acc = Metropolis(delE);
 
-      if (acc == 0){
-        ratio = 1./(1. + ratio) - 1.;
-        remap(dir, ratio);
-
-      } else {
+      if ( Metropolis(delE) ){
         eref = ecurrent;
         ++acc_vol;
+
+      } else {
+        ratio = 1./(1. + ratio) - 1.;
+        remap(dir, ratio);
       }
       ++att_vol;
     }
