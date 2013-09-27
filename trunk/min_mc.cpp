@@ -54,8 +54,8 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   dm_vol = 0.001;
   nrigid = 0;
   nMC_disp = nMC_swap = nMC_vol = 0;
-  acc_disp = acc_swap = acc_vol = 0;
-  att_disp = att_swap = att_vol = 0;
+  acc_disp = acc_swap = acc_vol = acc_total = 0;
+  att_disp = att_swap = att_vol = att_total = 0;
 
   MPI_Comm_rank(world, &me);
   MPI_Comm_size(world, &np);
@@ -123,6 +123,9 @@ int MinMC::iterate(int maxevent)
     // Volumetric adjustment
     ++stage;
     MC_vol();
+
+    att_total += att_swap;
+    acc_total += acc_swap;
 
     stage = it = 0;
     if (iter==1 || iter==max_iter || (iter%freq_out)==0) print_info(10);
@@ -256,8 +259,8 @@ void MinMC::read_control()
   for (int i = 1;   i <= atom->ntypes; ++i){ // Make sure ChemBias is symmetric
     ChemBias[i][i] = 0.;
     for (int j = i+1; j <= atom->ntypes; ++j){
-      if (fabs(ChemBias[i][j]) > ZERO && fabs(ChemBias[j][i]) < ZERO) ChemBias[j][i] = ChemBias[i][j];
-      if (fabs(ChemBias[j][i]) > ZERO && fabs(ChemBias[i][j]) < ZERO) ChemBias[i][j] = ChemBias[j][i];
+      if (fabs(ChemBias[i][j]) > ZERO && fabs(ChemBias[j][i]) < ZERO) ChemBias[j][i] = -ChemBias[i][j];
+      if (fabs(ChemBias[j][i]) > ZERO && fabs(ChemBias[i][j]) < ZERO) ChemBias[i][j] = -ChemBias[j][i];
     }
   }
 
@@ -291,12 +294,12 @@ void MinMC::read_control()
     }
 
     fprintf(fp1, "\n#======================================= MC based on LAMMPS ========================================\n");
-    fprintf(fp1, "# global control parameters\n");
     fprintf(fp1, "# max_iter          %-18d  # %s\n", max_iter,"Max number of MC iterations.");
+    fprintf(fp1, "# global control parameters\n");
     fprintf(fp1, "random_seed         %-18d  # %s\n", seed, "Seed for random generator.");
     fprintf(fp1, "temperature         %-18g  # %s\n", T, "Temperature for Metropolis algorithm, in K.");
     fprintf(fp1, "group_name          %-18s  # %s\n", groupname, "The lammps group ID of the atoms that will be displaced.");
-    fprintf(fp1, "\n# Chemical bias\n");
+    fprintf(fp1, "\n# Chemical bias:  src des  bias\n");
     for (int i = 1;   i <= atom->ntypes; ++i)
     for (int j = i+1; j <= atom->ntypes; ++j)
     fprintf(fp1, "chem_bias           %-3d %-3d %-10g  # %s\n", i,j,ChemBias[i][j], "Chemical bias between pairs.");
@@ -417,7 +420,9 @@ return;
 void MinMC::MC_disp()
 {
   double x0_loc[3], x0_all[3];
-  double dmax2 = dmax + dmax;
+  const double dmax2 = dmax + dmax;
+
+  att_disp = acc_disp = 0;
   for (it = 1; it <= nMC_disp; ++it){
     // define the atom that will be displaced
     if (me == 0){
@@ -436,7 +441,6 @@ void MinMC::MC_disp()
           x0_loc[idim] = x[i][idim];
           x[i][idim] += dmax2 * (0.5 - random->uniform());
         }
-        break;
       }
     }
     MPI_Allreduce(x0_loc, x0_all, 3, MPI_DOUBLE, MPI_SUM, world);
@@ -452,7 +456,6 @@ void MinMC::MC_disp()
       for (int i = 0; i < atom->nlocal; ++i){
         if (tag[i] == that){
           for (int idim = 0; idim < 3; ++idim) x[i][idim] = x0_all[idim];
-          break;
         }
       }
 
@@ -473,6 +476,7 @@ return;
  * ---------------------------------------------------------------------------*/
 void MinMC::MC_swap()
 {
+  att_swap = acc_swap = 0;
   for (it = 1; it <= nMC_swap; ++it){
     // define the central atom whose type will be changed
     if (me == 0){
@@ -488,6 +492,9 @@ void MinMC::MC_swap()
     int nlocal = atom->nlocal;
     int *tag   = atom->tag;
     double *rmass = atom->rmass;
+
+    double tmp_loc[2], tmp_all[2];
+    tmp_loc[0] = tmp_loc[1] = 0.;
    
     for (int i = 0; i < nlocal; ++i){
       int ip = atom->type[i];
@@ -502,17 +509,20 @@ void MinMC::MC_swap()
 
         ++nat_loc[ip_new]; --nat_loc[ip_old];
 
+        tmp_loc[0] = type2mass[ip_new]/type2mass[ip_old];
+        tmp_loc[1] = ChemBias[ip_old][ip_new];
+
         phit = me;
         id_hit = i;
       }
     }
     MPI_Reduce(nat_loc, nat_all, atom->ntypes+1, MPI_INT, MPI_SUM, 0, world);
+    MPI_Allreduce(tmp_loc, tmp_all, 2, MPI_DOUBLE, MPI_SUM, world);
 
-    double fugacity = type2mass[ip_new]/type2mass[ip_old];
     // evaluate energy and do metropolis
     ecurrent = energy_force(0); ++evalf;
-    delE = (ecurrent - eref) - 1.5 * kT * log(fugacity) - ChemBias[ip_old][ip_new];
 
+    delE = (ecurrent - eref) - 1.5 * kT * log(tmp_all[0]) - tmp_all[1];
     int acc = Metropolis(delE);
 
     if (acc){
@@ -521,6 +531,14 @@ void MinMC::MC_swap()
 
     } else {
 
+/*
+      for (int i = 0; i < atom->nlocal; ++i){
+        if (tag[i] == that){
+          atom->type[i] = ip_old;
+          if (rmass) rmass[i] = type2mass[ip_old];
+        }
+      }
+*/
       if (me == phit){
         atom->type[id_hit] = ip_old;
         if (rmass) rmass[id_hit] = type2mass[ip_new];
@@ -542,6 +560,8 @@ void MinMC::MC_vol()
 {
   double ratio;
   double dv = dm_vol + dm_vol;
+
+  att_vol = acc_vol = 0;
   for (it = 1; it <= nMC_vol; ++it){
     for (int dir = 0; dir < 3; ++dir){
       if (me == 0) ratio = dv * (0.5-random->uniform());
@@ -619,7 +639,9 @@ void MinMC::print_info(const int flag)
       fprintf(fp1,"\n");
     }
     if (screen){
-      fprintf(screen, "# MCiter stage iter     PotentialEng   acc%%   ");
+      fprintf(screen,"#");
+      for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(screen,"-");
+      fprintf(screen, "\n# MCiter stage iter     PotentialEng   acc%%   ");
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(screen, "  Type-%02d%%", ip);
       fprintf(screen,"\n#");
       for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(screen,"-");
@@ -666,7 +688,7 @@ void MinMC::print_info(const int flag)
     }
 
   } else if (flag == 10){
-    double succ = double(acc_swap)/double(MAX(1,att_swap))*100.;
+    double succ = double(acc_total)/double(MAX(1,att_total))*100.;
     if (fp1){
       fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
@@ -689,7 +711,7 @@ return;
  *----------------------------------------------------------------------------------------------- */
 int MinMC::Metropolis(const double dE)
 {
-  if (dE <= 0.) return 1;
+  if (dE < 0.) return 1;
 
   int res = 0;
   if (me == 0){

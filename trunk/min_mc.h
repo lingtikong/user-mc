@@ -55,6 +55,7 @@ private:
   int nMC_disp, nMC_swap, nMC_vol;
   int acc_disp, acc_swap, acc_vol;
   int att_disp, att_swap, att_vol;
+  int acc_total, att_total;
   double dm_vol;
 
   // for output
