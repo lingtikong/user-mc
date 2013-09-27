@@ -43,7 +43,7 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   log_level = evalf = 0;
   freq_out = freq_disp = freq_swap = freq_vol = 1;
 
-  fp = NULL;
+  fp1 = NULL;
   rfix = NULL;
   random = NULL;
   ChemBias = NULL;
@@ -75,7 +75,7 @@ return;
 ------------------------------------------------------------------------------------------------- */
 MinMC::~MinMC()
 {
-  if (fp) fclose(fp);
+  if (fp1) fclose(fp1);
   if (rfix) delete [] rfix;
   if (flog)   delete [] flog;
   if (glist)  delete [] glist;
@@ -284,36 +284,36 @@ void MinMC::read_control()
 
   // open log file and output control parameter info
   if (me == 0 && strcmp(flog, "NULL") != 0){
-    fp = fopen(flog, "w");
-    if (fp == NULL){
+    fp1 = fopen(flog, "w");
+    if (fp1 == NULL){
       sprintf(str, "Cannot open MC log file: %s for writing", flog);
       error->one(FLERR, str);
     }
 
-    fprintf(fp, "\n#===================================== MC based on LAMMPS ========================================\n");
-    fprintf(fp, "# global control parameters\n");
-    fprintf(fp, "# max_iter          %-18d  # %s\n", max_iter,"Max number of MC iterations.");
-    fprintf(fp, "random_seed         %-18d  # %s\n", seed, "Seed for random generator.");
-    fprintf(fp, "temperature         %-18g  # %s\n", T, "Temperature for Metropolis algorithm, in K.");
-    fprintf(fp, "group_name          %-18s  # %s\n", groupname, "The lammps group ID of the atoms that will be displaced.");
-    fprintf(fp, "\n# Chemical bias\n");
+    fprintf(fp1, "\n#======================================= MC based on LAMMPS ========================================\n");
+    fprintf(fp1, "# global control parameters\n");
+    fprintf(fp1, "# max_iter          %-18d  # %s\n", max_iter,"Max number of MC iterations.");
+    fprintf(fp1, "random_seed         %-18d  # %s\n", seed, "Seed for random generator.");
+    fprintf(fp1, "temperature         %-18g  # %s\n", T, "Temperature for Metropolis algorithm, in K.");
+    fprintf(fp1, "group_name          %-18s  # %s\n", groupname, "The lammps group ID of the atoms that will be displaced.");
+    fprintf(fp1, "\n# Chemical bias\n");
     for (int i = 1;   i <= atom->ntypes; ++i)
     for (int j = i+1; j <= atom->ntypes; ++j)
-    fprintf(fp, "chem_bias           %-3d %-3d %-10g  # %s\n", i,j,ChemBias[i][j], "Chemical bias between pairs.");
-    fprintf(fp, "\n# MC steps\n");
-    fprintf(fp, "nMC_disp            %-18d  # %s\n", nMC_disp, "# of iteraction for atomic  relax in each MC cycle.");
-    fprintf(fp, "nMC_swap            %-18d  # %s\n", nMC_swap, "# of iteraction for chemical swap in each MC cycle.");
-    fprintf(fp, "nMC_vol             %-18d  # %s\n", nMC_vol,  "# of iteraction for volume adjust in each MC cycle.");
-    fprintf(fp, "max_disp            %-18g  # %s\n", dmax, "Maximum displacement per step during relaxation.");
-    fprintf(fp, "max_dvol            %-18g  # %s\n", dm_vol, "Maximum relative change of box length.");
-    fprintf(fp, "\n# Output related parameters\n");
-    fprintf(fp, "log_file            %-18s  # %s\n", flog, "File to write MC log info; NULL to skip");
-    fprintf(fp, "log_level           %-18d  # %s\n", log_level, "Level of MC log ouput: 1, swap; 3, swap and disp; 7, all.");
-    fprintf(fp, "freq_out            %-18d  # %s\n", freq_out,  "Frequency to output MC log info.");
-    fprintf(fp, "freq_disp           %-18d  # %s\n", freq_disp, "Frequency to output log info during MC_disp.");
-    fprintf(fp, "freq_swap           %-18d  # %s\n", freq_swap, "Frequency to output log info during MC_swap.");
-    fprintf(fp, "freq_vol            %-18d  # %s\n", freq_vol,  "Frequency to output log info during MC_vol.");
-    fprintf(fp, "#====================================================================================================\n");
+    fprintf(fp1, "chem_bias           %-3d %-3d %-10g  # %s\n", i,j,ChemBias[i][j], "Chemical bias between pairs.");
+    fprintf(fp1, "\n# MC steps\n");
+    fprintf(fp1, "nMC_disp            %-18d  # %s\n", nMC_disp, "# of iteraction for atomic  relax in each MC cycle.");
+    fprintf(fp1, "nMC_swap            %-18d  # %s\n", nMC_swap, "# of iteraction for chemical swap in each MC cycle.");
+    fprintf(fp1, "nMC_vol             %-18d  # %s\n", nMC_vol,  "# of iteraction for volume adjust in each MC cycle.");
+    fprintf(fp1, "max_disp            %-18g  # %s\n", dmax, "Maximum displacement per step during relaxation.");
+    fprintf(fp1, "max_dvol            %-18g  # %s\n", dm_vol, "Maximum relative change of box length.");
+    fprintf(fp1, "\n# Output related parameters\n");
+    fprintf(fp1, "log_file            %-18s  # %s\n", flog, "File to write MC log info; NULL to skip");
+    fprintf(fp1, "log_level           %-18d  # %s\n", log_level, "Level of MC log ouput: 1, swap; 3, swap and disp; 7, all.");
+    fprintf(fp1, "freq_out            %-18d  # %s\n", freq_out,  "Frequency to output MC log info.");
+    fprintf(fp1, "freq_disp           %-18d  # %s\n", freq_disp, "Frequency to output log info during MC_disp.");
+    fprintf(fp1, "freq_swap           %-18d  # %s\n", freq_swap, "Frequency to output log info during MC_swap.");
+    fprintf(fp1, "freq_vol            %-18d  # %s\n", freq_vol,  "Frequency to output log info during MC_vol.");
+    fprintf(fp1, "#====================================================================================================\n");
   }
 
 return;
@@ -577,15 +577,15 @@ return;
 void MinMC::MC_final()
 {
   if (me == 0){
-    if (fp){
-      fprintf(fp, "\n");
-      fprintf(fp, "#=========================================================================================\n");
-      fprintf(fp, "# Total number of MC cycles     : %d\n", max_iter);
-      fprintf(fp, "# Num of accepted disp. attempt : %d (%4.2f%% success)\n", acc_disp, double(acc_disp)/(double(max_iter)*double(nMC_disp)));
-      fprintf(fp, "# Num of accepted swap  attempt : %d (%4.2f%% success)\n", acc_swap, double(acc_swap)/(double(max_iter)*double(nMC_swap)));
-      fprintf(fp, "# Num of accepted volume adjust : %d (%4.2f%% success)\n", acc_vol, double(acc_vol)/(double(max_iter)*double(nMC_vol)));
-      fprintf(fp, "# Number of force evaluation    : " BIGINT_FORMAT "\n", evalf);
-      fprintf(fp, "#=========================================================================================\n");
+    if (fp1){
+      fprintf(fp1, "\n");
+      fprintf(fp1, "#=========================================================================================\n");
+      fprintf(fp1, "# Total number of MC cycles     : %d\n", max_iter);
+      fprintf(fp1, "# Num of accepted disp. attempt : %d (%4.2f%% success)\n", acc_disp, double(acc_disp)/(double(max_iter)*double(nMC_disp)));
+      fprintf(fp1, "# Num of accepted swap  attempt : %d (%4.2f%% success)\n", acc_swap, double(acc_swap)/(double(max_iter)*double(nMC_swap)));
+      fprintf(fp1, "# Num of accepted volume adjust : %d (%4.2f%% success)\n", acc_vol, double(acc_vol)/(double(max_iter)*double(nMC_vol)));
+      fprintf(fp1, "# Number of force evaluation    : " BIGINT_FORMAT "\n", evalf);
+      fprintf(fp1, "#=========================================================================================\n");
     }
    
     if (screen){
@@ -611,12 +611,12 @@ void MinMC::print_info(const int flag)
   if (me != 0) return;
 
   if (flag == 0){
-    if (fp){
-      fprintf(fp, "# MCiter stage iter     PotentialEng   acc%%   ");
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp, "  Type-%02d%%", ip);
-      fprintf(fp,"\n#");
-      for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(fp,"-");
-      fprintf(fp,"\n");
+    if (fp1){
+      fprintf(fp1, "# MCiter stage iter     PotentialEng   acc%%   ");
+      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, "  Type-%02d%%", ip);
+      fprintf(fp1,"\n#");
+      for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(fp1,"-");
+      fprintf(fp1,"\n");
     }
     if (screen){
       fprintf(screen, "# MCiter stage iter     PotentialEng   acc%%   ");
@@ -628,10 +628,10 @@ void MinMC::print_info(const int flag)
 
   } else if (flag == 1){
     double succ = double(acc_disp)/double(MAX(1, att_disp))*100.;
-    if (fp){
-      fprintf(fp, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(fp, "\n");
+    if (fp1){
+      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
+      fprintf(fp1, "\n");
     }
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
@@ -641,10 +641,10 @@ void MinMC::print_info(const int flag)
 
   } else if (flag == 2){
     double succ = double(acc_swap)/double(MAX(1,att_swap))*100.;
-    if (fp){
-      fprintf(fp, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(fp, "\n");
+    if (fp1){
+      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
+      fprintf(fp1, "\n");
     }
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
@@ -654,10 +654,10 @@ void MinMC::print_info(const int flag)
 
   } else if (flag == 3){
     double succ = double(acc_vol)/double(MAX(1,att_vol))*100.;
-    if (fp){
-      fprintf(fp, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(fp, "\n");
+    if (fp1){
+      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
+      fprintf(fp1, "\n");
     }
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
@@ -667,10 +667,11 @@ void MinMC::print_info(const int flag)
 
   } else if (flag == 10){
     double succ = double(acc_swap)/double(MAX(1,att_swap))*100.;
-    if (fp){
-      fprintf(fp, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
-      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(fp, "\n");
+    if (fp1){
+      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
+      fprintf(fp1, "\n");
+      fflush(fp1);
     }
     if (screen){
       fprintf(screen, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);

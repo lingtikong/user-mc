@@ -58,7 +58,7 @@ private:
   double dm_vol;
 
   // for output
-  FILE *fp;
+  FILE *fp1;
   char *flog;
   int log_level;               // 1, all; 0, main
   int freq_out;                // frequency to output during MC cycle
