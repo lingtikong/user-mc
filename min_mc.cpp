@@ -410,12 +410,12 @@ void MinMC::MC_setup()
   }
 
   // rigid
-  for (int i = 0; i < modify->nfix; i++)
-    if (modify->fix[i]->rigid_flag) nrigid++;
+  for (int i = 0; i < modify->nfix; ++i)
+    if (modify->fix[i]->rigid_flag) ++nrigid;
   if (nrigid) {
     rfix = new int[nrigid];
     nrigid = 0;
-    for (int i = 0; i < modify->nfix; i++)
+    for (int i = 0; i < modify->nfix; ++i)
       if (modify->fix[i]->rigid_flag) rfix[nrigid++] = i;
   }
 
@@ -571,7 +571,7 @@ void MinMC::MC_vol()
       if (domain->periodicity[dir] == 0) continue;
 
       if (me == 0) ratio = dv * (0.5-random->uniform());
-      MPI_Bcast(&ratio, 1, MPI_INT, 0, world);
+      MPI_Bcast(&ratio, 1, MPI_DOUBLE, 0, world);
 
       remap(dir, ratio);
 
@@ -700,13 +700,13 @@ void MinMC::remap(const int dir, const double ratio)
   // convert pertinent atoms and rigid bodies to lamda coords
   if (remapall) domain->x2lamda(atom->nlocal);
   else {
-    for (int i = 0; i < atom->nlocal; i++){
+    for (int i = 0; i < atom->nlocal; ++i){
       if (mask[i] & groupbit) domain->x2lamda(x[i],x[i]);
     }
   }
 
   if (nrigid){
-    for (int i = 0; i < nrigid; i++) modify->fix[rfix[i]]->deform(0);
+    for (int i = 0; i < nrigid; ++i) modify->fix[rfix[i]]->deform(0);
   }
 
   // reset global and local box to new size/shape
@@ -722,13 +722,13 @@ void MinMC::remap(const int dir, const double ratio)
   // convert pertinent atoms and rigid bodies back to box coords
   if (remapall) domain->lamda2x(atom->nlocal);
   else {
-    for (int i = 0; i < atom->nlocal; i++){
+    for (int i = 0; i < atom->nlocal; ++i){
       if (mask[i] & groupbit) domain->lamda2x(x[i],x[i]);
     }
   }
 
   if (nrigid){
-    for (int i = 0; i < nrigid; i++) modify->fix[rfix[i]]->deform(1);
+    for (int i = 0; i < nrigid; ++i) modify->fix[rfix[i]]->deform(1);
   }
 
 return;
