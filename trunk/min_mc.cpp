@@ -131,7 +131,7 @@ int MinMC::iterate(int maxevent)
     // output for thermo, dump, restart files
     int ntimestep = ++update->ntimestep; ++niter;
     if (output->next == ntimestep){
-      energy_force(0);
+      energy_force(0); ++neval;
       timer->stamp();
       output->write(ntimestep);
       timer->stamp(TIME_OUTPUT);
@@ -426,7 +426,7 @@ return;
  * ------------------------------------------------------------------------------------------------- */
 void MinMC::MC_disp()
 {
-  double x0_loc[3], x0_all[3];
+  double dx_loc[3], dx_all[3];
   const double dmax2 = dmax + dmax;
 
   att_disp = acc_disp = 0;
@@ -438,24 +438,22 @@ void MinMC::MC_disp()
     }
     MPI_Bcast(&that, 1, MPI_INT, 0, world);
 
-    x0_loc[0] = x0_loc[1] = x0_loc[2] = 0.;
+    dx_loc[0] = dx_loc[1] = dx_loc[2] = 0.;
     // find the atom and displace it
     int *tag   = atom->tag;
     double **x = atom->x;
     for (int i = 0; i < atom->nlocal; ++i){
       if (tag[i] == that){
         for (int idim = 0; idim < 3; ++idim){
-          x0_loc[idim] = x[i][idim];
-          x[i][idim] += dmax2 * (0.5 - random->uniform());
+          dx_loc[idim] = dmax2 * (0.5 - random->uniform());
+          x[i][idim] += dx_loc[idim];
         }
         break;
       }
     }
-    MPI_Allreduce(x0_loc, x0_all, 3, MPI_DOUBLE, MPI_SUM, world);
     
     // evaluate the new energy
     ecurrent = energy_force(0); ++neval;
-
     // Metropolis
     delE = ecurrent - eref;
 
@@ -464,13 +462,16 @@ void MinMC::MC_disp()
       ++acc_disp;
 
     } else {
+
+      MPI_Allreduce(dx_loc, dx_all, 3, MPI_DOUBLE, MPI_SUM, world);
       // restore the atomic position
       for (int i = 0; i < atom->nlocal; ++i){
         if (tag[i] == that){
-          for (int idim = 0; idim < 3; ++idim) x[i][idim] = x0_all[idim];
+          for (int idim = 0; idim < 3; ++idim) x[i][idim] -= dx_all[idim];
           break;
         }
       }
+      eref = energy_force(0); ++neval;
     }
 
     ++att_disp;
@@ -498,14 +499,13 @@ void MinMC::MC_swap()
     for (int i = 1; i <= atom->ntypes; ++i) nat_loc[i] = 0;
     int ip_new, ip_old;
     int phit = -1, id_hit = 0;
-    int nlocal = atom->nlocal;
     int *tag   = atom->tag;
     double *rmass = atom->rmass;
 
     int ip_loc[2], ip_all[2];
     ip_loc[0] = ip_loc[1] = 0;
    
-    for (int i = 0; i < nlocal; ++i){
+    for (int i = 0; i < atom->nlocal; ++i){
       int ip = atom->type[i];
       ++nat_loc[ip];
 
@@ -517,7 +517,6 @@ void MinMC::MC_swap()
         if (rmass) rmass[i] = type2mass[ip_new];
 
         ++nat_loc[ip_new]; --nat_loc[ip_old];
-
 		  ip_loc[0] = ip_old; ip_loc[1] = ip_new;
 
         phit = me;
@@ -546,6 +545,8 @@ void MinMC::MC_swap()
         atom->type[id_hit] = ip_old;
         if (rmass) rmass[id_hit] = type2mass[ip_old];
       }
+      eref = energy_force(0); ++neval;
+      
       if (me == 0){ --nat_all[ip_new]; ++nat_all[ip_old];}
     }
     ++att_swap;
@@ -573,8 +574,8 @@ void MinMC::MC_vol()
       MPI_Bcast(&ratio, 1, MPI_DOUBLE, 0, world);
 
       remap(dir, ratio);
-
       ecurrent = energy_force(0); ++neval;
+
       delE = ecurrent - eref - 3.*double(ngroup)*kT*log(1.+ratio);
 
       if ( Metropolis(delE) ){
@@ -584,6 +585,8 @@ void MinMC::MC_vol()
       } else {
         ratio = 1./(1. + ratio) - 1.;
         remap(dir, ratio);
+
+        eref = energy_force(0); ++neval;
       }
       ++att_vol;
     }
@@ -623,17 +626,17 @@ void MinMC::print_info(const int flag)
 
   if (flag == 0){
     if (fp1){
-      fprintf(fp1, "# MCiter stage iter     PotentialEng   acc%%   ");
+      fprintf(fp1, "# MCiter stage iter      Current-Eng      Trial-Energy   acc%%   ");
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, "  Type-%02d%%", ip);
       fprintf(fp1,"\n#");
-      for (int i = 0; i < 48 + atom->ntypes*10; ++i) fprintf(fp1,"-");
+      for (int i = 0; i < 63 + atom->ntypes*10; ++i) fprintf(fp1,"-");
       fprintf(fp1,"\n");
     }
 
   } else if (flag == 1){
     double succ = double(acc_disp)/double(MAX(1, att_disp))*100.;
     if (fp1){
-      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      fprintf(fp1, "%9d %2d %7d %16.6f %16.6f %9.5f", iter, stage, it, eref, ecurrent, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
@@ -641,7 +644,7 @@ void MinMC::print_info(const int flag)
   } else if (flag == 2){
     double succ = double(acc_swap)/double(MAX(1,att_swap))*100.;
     if (fp1){
-      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      fprintf(fp1, "%9d %2d %7d %16.6f %16.6f %9.5f", iter, stage, it, eref, ecurrent, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
@@ -649,7 +652,7 @@ void MinMC::print_info(const int flag)
   } else if (flag == 3){
     double succ = double(acc_vol)/double(MAX(1,att_vol))*100.;
     if (fp1){
-      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      fprintf(fp1, "%9d %2d %7d %16.6f %16.6f %9.5f", iter, stage, it, eref, ecurrent, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
     }
@@ -657,7 +660,7 @@ void MinMC::print_info(const int flag)
   } else if (flag == 10){
     double succ = double(acc_total)/double(MAX(1,att_total))*100.;
     if (fp1){
-      fprintf(fp1, "%9d %2d %7d %16.6f %9.5f", iter, stage, it, eref, succ);
+      fprintf(fp1, "%9d %2d %7d %16.6f %16.6f %9.5f", iter, stage, it, eref, ecurrent, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
       fprintf(fp1, "\n");
       fflush(fp1);
