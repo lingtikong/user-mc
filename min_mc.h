@@ -52,7 +52,7 @@ private:
 
   int *nat_loc, *nat_all;
   double eref, delE;
-  double T, kT, inv_kT;
+  double T, kT, inv_kT, tnkt;
   double *type2mass;
   double **ChemBias;
   int nMC_disp, nMC_swap, nMC_vol;

@@ -361,6 +361,7 @@ void MinMC::MC_setup()
   // other derived values
   kT = force->boltz * T;
   nkt = double(ngroup) * kT;
+  tnkt = 3.*nkt;
   inv_kT = 1./kT;
   random = new RanPark(lmp, seed+me);
 
@@ -511,6 +512,7 @@ return;
  * ------------------------------------------------------------------------------------------------- */
 void MinMC::MC_swap()
 {
+  double thr2_kt = 1.5 * kT;
   att_swap = acc_swap = 0;
   for (it = 1; it <= nMC_swap; ++it){
     // define the central atom whose type will be changed
@@ -558,7 +560,7 @@ void MinMC::MC_swap()
     double fagu = type2mass[ip_new]/type2mass[ip_old];
     double cb   = ChemBias[ip_old][ip_new];
 
-    delE = (ecurrent - eref) - 1.5 * kT * log(fagu) - cb;
+    delE = (ecurrent - eref) - thr2_kt * log(fagu) - cb;
 
     if ( Metropolis(delE) ){
       eref = ecurrent;
@@ -608,7 +610,7 @@ void MinMC::MC_vol()
       double vnew = domain->xprd * domain->yprd * domain->zprd;
       double dpv = pold * (vnew - vol) * pv2e;
 
-      delE = ecurrent - eref - dpv - 3.*double(ngroup)*kT*log(1.+ratio);
+      delE = ecurrent - eref - dpv - tnkt * log(1.+ratio);
 
       if ( Metropolis(delE) ){
         eref = ecurrent;
