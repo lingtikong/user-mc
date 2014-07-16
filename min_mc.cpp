@@ -56,6 +56,8 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   acc_disp = acc_swap = acc_vol = acc_total = 0;
   att_disp = att_swap = att_vol = att_total = 0;
 
+  pressure = NULL;
+
   MPI_Comm_rank(world, &me);
   MPI_Comm_size(world, &np);
 
@@ -65,6 +67,21 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   memory->create(ChemBias, atom->ntypes+1, atom->ntypes+1, "ChemBias");
   for (int i = 0; i <= atom->ntypes; ++i)
   for (int j = 0; j <= atom->ntypes; ++j) ChemBias[i][j] = 0.;
+
+  // create a new compute pressure style (virial only)
+  // id = fix-ID + press, compute group = all
+  // pass id_temp as 4th arg to pressure constructor
+
+  id_press = new char[9];
+  strcpy(id_press, "mc_press");
+  char **newarg = new char*[5];
+  newarg[0] = id_press;
+  newarg[1] = (char *) "all";
+  newarg[2] = (char *) "pressure";
+  newarg[3] = (char *) "NULL";
+  newarg[4] = (char *) "virial";
+  modify->add_compute(5,newarg);
+  delete [] newarg;
 
 return;
 }
@@ -80,6 +97,7 @@ MinMC::~MinMC()
   if (glist)  delete [] glist;
   if (random) delete random;
   if (groupname) delete [] groupname;
+  if (pressure) modify->delete_compute(id_press);
 
   memory->destroy(nat_loc);
   memory->destroy(nat_all);
@@ -136,6 +154,7 @@ int MinMC::iterate(int maxevent)
       output->write(ntimestep);
       timer->stamp(TIME_OUTPUT);
     }
+    pressure->addstep(ntimestep);
   }
 
   MC_final();
@@ -341,6 +360,7 @@ void MinMC::MC_setup()
 
   // other derived values
   kT = force->boltz * T;
+  nkt = double(ngroup) * kT;
   inv_kT = 1./kT;
   random = new RanPark(lmp, seed+me);
 
@@ -418,6 +438,11 @@ void MinMC::MC_setup()
       if (modify->fix[i]->rigid_flag) rfix[nrigid++] = i;
   }
 
+  int icompute = modify->find_compute(id_press);
+  if (icompute < 0) error->all(FLERR,"Pressure ID for fix box/relax does not exist");
+  pressure = modify->compute[icompute];
+  pv2e = 1./force->nktv2p;
+
 return;
 }
 
@@ -440,7 +465,7 @@ void MinMC::MC_disp()
 
     dx_loc[0] = dx_loc[1] = dx_loc[2] = 0.;
     // find the atom and displace it
-    int *tag   = atom->tag;
+    tagint *tag = atom->tag;
     double **x = atom->x;
     for (int i = 0; i < atom->nlocal; ++i){
       if (tag[i] == that){
@@ -573,14 +598,23 @@ void MinMC::MC_vol()
       if (me == 0) ratio = dv * (0.5-random->uniform());
       MPI_Bcast(&ratio, 1, MPI_DOUBLE, 0, world);
 
+      pressure->compute_vector();
+      double pold = pressure->vector[dir];
+      vol = domain->xprd * domain->yprd * domain->zprd;
+
       remap(dir, ratio);
       ecurrent = energy_force(0); ++neval;
 
-      delE = ecurrent - eref - 3.*double(ngroup)*kT*log(1.+ratio);
+      double vnew = domain->xprd * domain->yprd * domain->zprd;
+      double dpv = pold * (vnew - vol) * pv2e;
+
+      delE = ecurrent - eref - dpv - 3.*double(ngroup)*kT*log(1.+ratio);
 
       if ( Metropolis(delE) ){
         eref = ecurrent;
         ++acc_vol;
+        vol = domain->xprd * domain->yprd * domain->zprd;
+        pressure->compute_vector();
 
       } else {
         ratio = 1./(1. + ratio) - 1.;
@@ -590,6 +624,7 @@ void MinMC::MC_vol()
       }
       ++att_vol;
     }
+    p_hydr = (pressure->vector[0] + pressure->vector[1] + pressure->vector[2]);
 
     if (me == 0 && (log_level&4) && ((it%freq_vol)==0 || it==nMC_vol || it==1)) print_info(3);
   }
@@ -654,7 +689,7 @@ void MinMC::print_info(const int flag)
     if (fp1){
       fprintf(fp1, "%9d %2d %7d %16.6f %16.6f %9.5f", iter, stage, it, eref, ecurrent, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(fp1, "\n");
+      fprintf(fp1, " %lg\n", p_hydr/3.+nkt/vol*force->nktv2p);
     }
 
   } else if (flag == 10){
