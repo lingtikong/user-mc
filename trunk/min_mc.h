@@ -39,12 +39,16 @@ private:
   void remap(const int, const double);
   int nrigid, *rfix;
 
+  char *id_press;
+  double p_hydr, nkt, pv2e, vol;
+  class Compute *pressure;
+
   int seed;
   RanPark *random;
 
   int groupbit, ngroup, n_all; // group bit & # of atoms for MC
   char *groupname;             // group name for MC
-  int that, *glist;            // ID and list to choose
+  tagint that, *glist;         // ID and list to choose
 
   int *nat_loc, *nat_all;
   double eref, delE;
