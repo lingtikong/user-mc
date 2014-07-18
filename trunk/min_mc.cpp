@@ -607,8 +607,8 @@ void MinMC::MC_vol()
       remap(dir, ratio);
       ecurrent = energy_force(0); ++neval;
 
-      double vnew = domain->xprd * domain->yprd * domain->zprd;
-      double dpv = pold * (vnew - vol) * pv2e;
+      double delV = ratio * vol;
+      double dpv = pold * delV * pv2e;
 
       delE = ecurrent - eref - dpv - tnkt * log(1.+ratio);
 
