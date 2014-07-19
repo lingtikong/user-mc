@@ -50,13 +50,12 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   groupname = flog = NULL;
   nat_loc = nat_all = NULL;
 
+  vol_coup = 0;
   dm_vol = 0.001;
   nrigid = 0;
   nMC_disp = nMC_swap = nMC_vol = 0;
   acc_disp = acc_swap = acc_vol = acc_total = 0;
   att_disp = att_swap = att_vol = att_total = 0;
-
-  pressure = NULL;
 
   MPI_Comm_rank(world, &me);
   MPI_Comm_size(world, &np);
@@ -67,21 +66,6 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   memory->create(ChemBias, atom->ntypes+1, atom->ntypes+1, "ChemBias");
   for (int i = 0; i <= atom->ntypes; ++i)
   for (int j = 0; j <= atom->ntypes; ++j) ChemBias[i][j] = 0.;
-
-  // create a new compute pressure style (virial only)
-  // id = fix-ID + press, compute group = all
-  // pass id_temp as 4th arg to pressure constructor
-
-  id_press = new char[9];
-  strcpy(id_press, "mc_press");
-  char **newarg = new char*[5];
-  newarg[0] = id_press;
-  newarg[1] = (char *) "all";
-  newarg[2] = (char *) "pressure";
-  newarg[3] = (char *) "NULL";
-  newarg[4] = (char *) "virial";
-  modify->add_compute(5,newarg);
-  delete [] newarg;
 
 return;
 }
@@ -97,7 +81,6 @@ MinMC::~MinMC()
   if (glist)  delete [] glist;
   if (random) delete random;
   if (groupname) delete [] groupname;
-  if (pressure) modify->delete_compute(id_press);
 
   memory->destroy(nat_loc);
   memory->destroy(nat_all);
@@ -154,7 +137,6 @@ int MinMC::iterate(int maxevent)
       output->write(ntimestep);
       timer->stamp(TIME_OUTPUT);
     }
-    pressure->addstep(ntimestep);
   }
 
   MC_final();
@@ -244,6 +226,13 @@ void MinMC::read_control()
       } else if (strcmp(token1, "max_dvol") == 0){
         dm_vol = force->numeric(FLERR, token2);
         if (dm_vol <= 0.) error->all(FLERR, "MC: max_disp must be greater than 0.");
+
+      } else if (strcmp(token1, "vol_coup") == 0){
+        if (strcmp(token2, "xyz") == 0 || strcmp(token2, "iso") == 0) vol_coup = 7;
+        else if (strcmp(token2, "xy") == 0) vol_coup = 6;
+        else if (strcmp(token2, "xz") == 0) vol_coup = 5;
+        else if (strcmp(token2, "yz") == 0) vol_coup = 3;
+        else vol_coup = 0;
 
       } else if (!strcmp(token1, "log_file")){
         if (flog) delete []flog;
@@ -335,6 +324,11 @@ void MinMC::read_control()
     fprintf(fp1, "nMC_vol             %-18d  # %s\n", nMC_vol,  "# of iteraction for volume adjust in each MC cycle.");
     fprintf(fp1, "max_disp            %-18g  # %s\n", dmax, "Maximum displacement per step during relaxation.");
     fprintf(fp1, "max_dvol            %-18g  # %s\n", dm_vol, "Maximum relative change of box length.");
+    if (vol_coup == 0) fprintf(fp1, "vol_coup            aniso               # Independent adjustment of box lengths.");
+    if (vol_coup == 7) fprintf(fp1, "vol_coup            iso                 # Coupled adjustment of box lengths.");
+    if (vol_coup == 6) fprintf(fp1, "vol_coup            xy                  # Coupled adjustment of box lengths along x and y.");
+    if (vol_coup == 5) fprintf(fp1, "vol_coup            xz                  # Coupled adjustment of box lengths along x and z.");
+    if (vol_coup == 3) fprintf(fp1, "vol_coup            yz                  # Coupled adjustment of box lengths along y and z.");
     fprintf(fp1, "\n# Output related parameters\n");
     fprintf(fp1, "log_file            %-18s  # %s\n", flog, "File to write MC log info; NULL to skip");
     fprintf(fp1, "log_level           %-18d  # %s\n", log_level, "Level of MC log ouput: 1, swap; 3, swap and disp; 7, all.");
@@ -360,8 +354,8 @@ void MinMC::MC_setup()
 
   // other derived values
   kT = force->boltz * T;
-  nkt = double(ngroup) * kT;
-  tnkt = 3.*nkt;
+  nkT = kT * double(ngroup);
+  oh_kT = 1.5 * kT;
   inv_kT = 1./kT;
   random = new RanPark(lmp, seed+me);
 
@@ -439,11 +433,6 @@ void MinMC::MC_setup()
       if (modify->fix[i]->rigid_flag) rfix[nrigid++] = i;
   }
 
-  int icompute = modify->find_compute(id_press);
-  if (icompute < 0) error->all(FLERR,"Pressure ID for fix box/relax does not exist");
-  pressure = modify->compute[icompute];
-  pv2e = 1./force->nktv2p;
-
 return;
 }
 
@@ -466,7 +455,7 @@ void MinMC::MC_disp()
 
     dx_loc[0] = dx_loc[1] = dx_loc[2] = 0.;
     // find the atom and displace it
-    tagint *tag = atom->tag;
+    int *tag   = atom->tag;
     double **x = atom->x;
     for (int i = 0; i < atom->nlocal; ++i){
       if (tag[i] == that){
@@ -512,7 +501,6 @@ return;
  * ------------------------------------------------------------------------------------------------- */
 void MinMC::MC_swap()
 {
-  double thr2_kt = 1.5 * kT;
   att_swap = acc_swap = 0;
   for (it = 1; it <= nMC_swap; ++it){
     // define the central atom whose type will be changed
@@ -560,7 +548,7 @@ void MinMC::MC_swap()
     double fagu = type2mass[ip_new]/type2mass[ip_old];
     double cb   = ChemBias[ip_old][ip_new];
 
-    delE = (ecurrent - eref) - thr2_kt * log(fagu) - cb;
+    delE = (ecurrent - eref) - oh_kT * log(fagu) - cb;
 
     if ( Metropolis(delE) ){
       eref = ecurrent;
@@ -589,44 +577,53 @@ return;
  * ------------------------------------------------------------------------------------------------- */
 void MinMC::MC_vol()
 {
-  double ratio;
+  double ratio[3];
   const double dv = dm_vol + dm_vol;
 
   att_vol = acc_vol = 0;
   for (it = 1; it <= nMC_vol; ++it){
-    for (int dir = 0; dir < 3; ++dir){
-      if (domain->periodicity[dir] == 0) continue;
 
-      if (me == 0) ratio = dv * (0.5-random->uniform());
-      MPI_Bcast(&ratio, 1, MPI_DOUBLE, 0, world);
+    if (me == 0){
+      if (vol_coup == 0){
+        for (int dir = 0; dir < 3; ++dir) ratio[dir] = dv * (0.5-random->uniform());
 
-      pressure->compute_vector();
-      double pold = pressure->vector[dir];
-      vol = domain->xprd * domain->yprd * domain->zprd;
-
-      remap(dir, ratio);
-      ecurrent = energy_force(0); ++neval;
-
-      double delV = ratio * vol;
-      double dpv = pold * delV * pv2e;
-
-      delE = ecurrent - eref - dpv - tnkt * log(1.+ratio);
-
-      if ( Metropolis(delE) ){
-        eref = ecurrent;
-        ++acc_vol;
-        vol = domain->xprd * domain->yprd * domain->zprd;
-        pressure->compute_vector();
+      } else if (vol_coup == 6){
+        ratio[0] = ratio[1] =  dv * (0.5-random->uniform());
+        ratio[2] =  dv * (0.5-random->uniform());
+        
+      } else if (vol_coup == 5){
+        ratio[0] = ratio[2] =  dv * (0.5-random->uniform());
+        ratio[1] =  dv * (0.5-random->uniform());
+        
+      } else if (vol_coup == 3){
+        ratio[0] =  dv * (0.5-random->uniform());
+        ratio[1] = ratio[2] =  dv * (0.5-random->uniform());
 
       } else {
-        ratio = 1./(1. + ratio) - 1.;
-        remap(dir, ratio);
-
-        eref = energy_force(0); ++neval;
+        ratio[0] = ratio[1] = ratio[2] =  dv * (0.5-random->uniform());
       }
-      ++att_vol;
+
+      for (int dir = 0; dir < 3; ++dir) if (domain->periodicity[dir] == 0) ratio[dir] = 0.;
     }
-    p_hydr = (pressure->vector[0] + pressure->vector[1] + pressure->vector[2]);
+    MPI_Bcast(ratio, 3, MPI_DOUBLE, 0, world);
+
+    remap(ratio);
+    ecurrent = energy_force(0); ++neval;
+    double vr = (1. + ratio[0]) * (1. + ratio[1]) * (1. + ratio[2]);
+
+    delE = ecurrent - eref - nkT*log(vr);
+
+    if ( Metropolis(delE) ){
+      eref = ecurrent;
+      ++acc_vol;
+
+    } else {
+      for (int i = 0; i < 3; ++i ) ratio[i] = 1./(1. + ratio[i]) - 1.;
+      remap(ratio);
+
+      eref = energy_force(0); ++neval;
+    }
+    ++att_vol;
 
     if (me == 0 && (log_level&4) && ((it%freq_vol)==0 || it==nMC_vol || it==1)) print_info(3);
   }
@@ -691,7 +688,7 @@ void MinMC::print_info(const int flag)
     if (fp1){
       fprintf(fp1, "%9d %2d %7d %16.6f %16.6f %9.5f", iter, stage, it, eref, ecurrent, succ);
       for (int ip = 1; ip <= atom->ntypes; ++ip) fprintf(fp1, " %9.5f", double(nat_all[ip])/double(n_all)*100.);
-      fprintf(fp1, " %lg\n", p_hydr/3.+nkt/vol*force->nktv2p);
+      fprintf(fp1, "\n");
     }
 
   } else if (flag == 10){
@@ -731,7 +728,7 @@ return res;
  * remap all atoms or fix group atoms depending on allremap flag
  * if rigid bodies exist, scale rigid body centers-of-mass
  * ------------------------------------------------------------------------------------------------- */
-void MinMC::remap(const int dir, const double ratio)
+void MinMC::remap(double *ratio)
 {
   double **x = atom->x;
   int *mask = atom->mask;
@@ -749,11 +746,13 @@ void MinMC::remap(const int dir, const double ratio)
   }
 
   // reset global and local box to new size/shape
-  double oldlo = domain->boxlo[dir];
-  double oldhi = domain->boxhi[dir];
-  double ctr = 0.5 * (oldlo + oldhi);
-  domain->boxlo[dir] = (oldlo-ctr)*(1. + ratio) + ctr;
-  domain->boxhi[dir] = (oldhi-ctr)*(1. + ratio) + ctr;
+  for (int dir = 0; dir < 3; ++dir){
+    double oldlo = domain->boxlo[dir];
+    double oldhi = domain->boxhi[dir];
+    double ctr = 0.5 * (oldlo + oldhi);
+    domain->boxlo[dir] = (oldlo-ctr)*(1. + ratio[dir]) + ctr;
+    domain->boxhi[dir] = (oldhi-ctr)*(1. + ratio[dir]) + ctr;
+  }
 
   domain->set_global_box();
   domain->set_local_box();
