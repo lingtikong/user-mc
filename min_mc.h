@@ -36,23 +36,19 @@ private:
   int Metropolis(const double);
 
   int remapall;
-  void remap(const int, const double);
+  void remap(double *);
   int nrigid, *rfix;
-
-  char *id_press;
-  double p_hydr, nkt, pv2e, vol;
-  class Compute *pressure;
 
   int seed;
   RanPark *random;
 
   int groupbit, ngroup, n_all; // group bit & # of atoms for MC
   char *groupname;             // group name for MC
-  tagint that, *glist;         // ID and list to choose
+  int that, *glist;            // ID and list to choose
 
   int *nat_loc, *nat_all;
   double eref, delE;
-  double T, kT, inv_kT, tnkt;
+  double T, kT, nkT, oh_kT, inv_kT;
   double *type2mass;
   double **ChemBias;
   int nMC_disp, nMC_swap, nMC_vol;
@@ -60,6 +56,7 @@ private:
   int att_disp, att_swap, att_vol;
   int acc_total, att_total;
   double dm_vol;
+  int vol_coup;
 
   // for output
   FILE *fp1;
