@@ -36,7 +36,7 @@ private:
   int Metropolis(const double);
 
   int remapall;
-  void remap(double *);
+  void remap(const double *);
   int nrigid, *rfix;
 
   int seed;
@@ -55,8 +55,9 @@ private:
   int acc_disp, acc_swap, acc_vol;
   int att_disp, att_swap, att_vol;
   int acc_total, att_total;
-  double dm_vol;
-  int vol_coup;
+  int couple[3];
+  char *scouple;
+  double dm_vol, two_dv;
 
   // for output
   FILE *fp1;

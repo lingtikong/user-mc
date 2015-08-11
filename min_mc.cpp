@@ -50,7 +50,11 @@ MinMC::MinMC(LAMMPS *lmp): MinLineSearch(lmp)
   groupname = flog = NULL;
   nat_loc = nat_all = NULL;
 
-  vol_coup = 0;
+  couple[0] = 0;
+  couple[1] = 1;
+  couple[2] = 2;
+  scouple = NULL;
+
   dm_vol = 0.001;
   nrigid = 0;
   nMC_disp = nMC_swap = nMC_vol = 0;
@@ -80,6 +84,7 @@ MinMC::~MinMC()
   if (flog)   delete [] flog;
   if (glist)  delete [] glist;
   if (random) delete random;
+  if (scouple) delete []scouple;
   if (groupname) delete [] groupname;
 
   memory->destroy(nat_loc);
@@ -228,11 +233,12 @@ void MinMC::read_control()
         if (dm_vol <= 0.) error->all(FLERR, "MC: max_disp must be greater than 0.");
 
       } else if (strcmp(token1, "vol_coup") == 0){
-        if (strcmp(token2, "xyz") == 0 || strcmp(token2, "iso") == 0) vol_coup = 7;
-        else if (strcmp(token2, "xy") == 0) vol_coup = 6;
-        else if (strcmp(token2, "xz") == 0) vol_coup = 5;
-        else if (strcmp(token2, "yz") == 0) vol_coup = 3;
-        else vol_coup = 0;
+        if (scouple) delete []scouple;
+        scouple = new char [strlen(token2)+1]; strcpy(scouple, token2);
+        if (strcmp(token2, "xyz") == 0 || strcmp(token2, "iso") == 0) couple[1] = couple[2] = 0;
+        else if (strcmp(token2, "xy") == 0) couple[1] = 0;
+        else if (strcmp(token2, "xz") == 0) couple[2] = 0;
+        else if (strcmp(token2, "yz") == 0) couple[2] = 1;
 
       } else if (!strcmp(token1, "log_file")){
         if (flog) delete []flog;
@@ -300,6 +306,12 @@ void MinMC::read_control()
 
   if (n_all != ngroup) remapall = 0;
 
+  // coupling info
+  if (scouple == NULL){
+    scouple = new char [5];
+    strcpy(scouple, "none");
+  }
+
   // open log file and output control parameter info
   if (me == 0 && strcmp(flog, "NULL") != 0){
     fp1 = fopen(flog, "w");
@@ -324,11 +336,7 @@ void MinMC::read_control()
     fprintf(fp1, "nMC_vol             %-18d  # %s\n", nMC_vol,  "# of iteraction for volume adjust in each MC cycle.");
     fprintf(fp1, "max_disp            %-18g  # %s\n", dmax, "Maximum displacement per step during relaxation.");
     fprintf(fp1, "max_dvol            %-18g  # %s\n", dm_vol, "Maximum relative change of box length.");
-    if (vol_coup == 0) fprintf(fp1, "vol_coup            aniso               # Independent adjustment of box lengths.");
-    if (vol_coup == 7) fprintf(fp1, "vol_coup            iso                 # Coupled adjustment of box lengths.");
-    if (vol_coup == 6) fprintf(fp1, "vol_coup            xy                  # Coupled adjustment of box lengths along x and y.");
-    if (vol_coup == 5) fprintf(fp1, "vol_coup            xz                  # Coupled adjustment of box lengths along x and z.");
-    if (vol_coup == 3) fprintf(fp1, "vol_coup            yz                  # Coupled adjustment of box lengths along y and z.");
+    fprintf(fp1, "vol_coup            %-18s  # %s\n", scouple, "Coupling info among different directions during volume adjustment.");
     fprintf(fp1, "\n# Output related parameters\n");
     fprintf(fp1, "log_file            %-18s  # %s\n", flog, "File to write MC log info; NULL to skip");
     fprintf(fp1, "log_level           %-18d  # %s\n", log_level, "Level of MC log ouput: 1, swap; 3, swap and disp; 7, all.");
@@ -358,6 +366,8 @@ void MinMC::MC_setup()
   oh_kT = 1.5 * kT;
   inv_kT = 1./kT;
   random = new RanPark(lmp, seed+me);
+
+  two_dv = dm_vol + dm_vol;
 
   // group list
   int nlocal = atom->nlocal;
@@ -577,33 +587,18 @@ return;
  * ------------------------------------------------------------------------------------------------- */
 void MinMC::MC_vol()
 {
-  double ratio[3];
-  const double dv = dm_vol + dm_vol;
+  double ratio[3], rnd[3];
 
   att_vol = acc_vol = 0;
   for (it = 1; it <= nMC_vol; ++it){
 
     if (me == 0){
-      if (vol_coup == 0){
-        for (int dir = 0; dir < 3; ++dir) ratio[dir] = dv * (0.5-random->uniform());
+      for (int i = 0; i < 3; ++i){
+        rnd[i] = two_dv * (0.5 - random->uniform());
+        ratio[i] = rnd[couple[i]];
 
-      } else if (vol_coup == 6){
-        ratio[0] = ratio[1] =  dv * (0.5-random->uniform());
-        ratio[2] =  dv * (0.5-random->uniform());
-        
-      } else if (vol_coup == 5){
-        ratio[0] = ratio[2] =  dv * (0.5-random->uniform());
-        ratio[1] =  dv * (0.5-random->uniform());
-        
-      } else if (vol_coup == 3){
-        ratio[0] =  dv * (0.5-random->uniform());
-        ratio[1] = ratio[2] =  dv * (0.5-random->uniform());
-
-      } else {
-        ratio[0] = ratio[1] = ratio[2] =  dv * (0.5-random->uniform());
+        if (domain->periodicity[i] == 0) ratio[i] = 0.;
       }
-
-      for (int dir = 0; dir < 3; ++dir) if (domain->periodicity[dir] == 0) ratio[dir] = 0.;
     }
     MPI_Bcast(ratio, 3, MPI_DOUBLE, 0, world);
 
@@ -728,7 +723,7 @@ return res;
  * remap all atoms or fix group atoms depending on allremap flag
  * if rigid bodies exist, scale rigid body centers-of-mass
  * ------------------------------------------------------------------------------------------------- */
-void MinMC::remap(double *ratio)
+void MinMC::remap(const double *ratio)
 {
   double **x = atom->x;
   int *mask = atom->mask;
